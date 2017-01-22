@@ -12,8 +12,15 @@ import time
 
 bufSize = 1800
 
-sockPublic = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-sockInternal = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+class Session:
+    def __init__(self, sock, local, remote):
+        self.sock = sock
+        self.local = local
+        self.remote = remote
+        self.lastUsed = time.time()
+    def __repr__(self):
+        return "local [%s]:%d remote [%s]:%d" % (self.local[0], self.local[0],
+                                                 self.remote[0], s.remote[0])
 
 def forward(data, source, sockOut, dest, str):
     print("%s: Got %d B from [%s]:%d" % (str, len(data), source[0], source[1]))
@@ -26,41 +33,73 @@ def forward(data, source, sockOut, dest, str):
         print("Failed to send %d B to [%s]:%d, sendto returned: %d" %
               (len(data), dest[0], dest[1], sent))
 
-def listen(public, internal, defaultRemote, defaultLocal, timeout):    
+def remove_old_sessions(sessions, timeout):
+    valid = []
+    for s in sessions:
+        if time.time() >= s.lastUsed + timeout:
+            print("Timing out session %s" % str(s))
+            continue
+        valid.append(s)
+    return valid
+
+def find_session(local, remote, sessions):
+    for s in sessions:
+        if s.local == local and s.remote == remote:
+            return s
+    return None
+
+def handle_incoming(data, addr, sessions):
+    # TODO
+    pass
+
+def handle_outgoing_def(data, addr, defaultRemote, sockPublic):
+    forward(data, addr, sockPublic, defaultRemote, 'Default out')
+
+def handle_outgoing(data, addr, session, sockPublic):
+    s = find_session(addr, defaultRemote)
+    if not s:
+        s = Session(sockInternal, addr, defaultRemote)
+        sessions.append(s)
+    s.lastUsed = time.time()
+    pass
+
+def listen(public, internal, defaultRemote, defaultLocal, timeout):
+    sessions = []
+    defaultSession = None
+
+    sockPublic = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+    sockInternal = None
+
     print("Binding sockPublic to [%s]:%d" % public)
     sockPublic.bind(public)
-    print("Binding sockInternal to [%s]:%d" % internal)
-    sockInternal.bind(internal)
 
-    remote = defaultRemote
-    local = defaultLocal
+    if defaultRemote[0]:
+        print("Binding sockInternal to [%s]:%d" % internal)
+        sockInternal = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        sockInternal.bind(internal)
 
     while True:
-        rlistIn = [sockPublic, sockInternal]
+        sessions = remove_old_sessions(sessions)
+        rlistIn = [sockPublic]
+        if sockInternal:
+            rListIn.append(sockInternal)
         rlist = select.select(rlistIn, [], [], timeout)[0]
+
         if sockPublic in rlist:
             data, addr = sockPublic.recvfrom(bufSize)
-            if remote is None or remote[0] != addr[0] or remote[1] != addr[1]:
-                remote = addr
-                print("Remote node changed: [%s]:%d" % (remote[0], remote[1]))
-            forward(data, addr, sockInternal, local, "sockPublic")
-        elif sockInternal in rlist:
-            data, addr = sockInternal.recvfrom(bufSize)
-            if local is None or local[0] != addr[0] or local[1] != addr[1]:
-                local = addr
-                print("Local node changed: [%s]:%d" % (local[0], local[1]))
-            forward(data, addr, sockPublic, remote, "sockInternal")
-        else:
-            if remote != defaultRemote:
-                remote = defaultRemote
-                print("Timeout, remote node set to: [%s]:%d", remote)
-            if local != defaultLocal:
-                local = defaultLocal
-                print("Timeout, local node set to: [%s]:%d", local)
+            handle_incoming(data, addr[:2], sessions)
 
-if __name__ == "__main__":    
+        if sockInternal and sockInternal in rlist:
+            data, addr = sockInternal.recvfrom(bufSize)
+            handle_outgoing_def(data, addr[:2], defaultRemote, sockPublic)
+
+        for s in sessions:
+            if s.sock in rlist:
+                handle_outgoing(data, addr[:2], s)
+
+if __name__ == "__main__":
     description = "Forward UDPv6 packets from one address to another."
-    
+
     parser = argparse.ArgumentParser(description=description,
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
@@ -68,7 +107,7 @@ if __name__ == "__main__":
                         default="::",
                         help="Public address")
     parser.add_argument("--publicport", dest="pub_port", metavar="PUBPORT",
-                        default=5683, type=int,
+                        default=56830, type=int,
                         help="Public port")
     parser.add_argument("--internal", dest="int_addr", metavar="INTADDR",
                         default="fc00:1::1",
@@ -77,22 +116,27 @@ if __name__ == "__main__":
                         default=5683, type=int,
                         help="Internal port")
     parser.add_argument("--remote", dest="remote_addr", metavar="REMOTE",
-                        default=None, 
+                        default=None,
                         help="Address of the remote node")
     parser.add_argument("--remoteport", dest="remote_port", metavar="REMOTEPORT",
-                        default=5683, type=int,
+                        default=56830, type=int,
                         help="Port of the remote node")
     parser.add_argument("--local", dest="local_addr", metavar="LOCAL",
-                        default=None, 
+                        default=None,
                         help="Address of the local node")
     parser.add_argument("--localport", dest="local_port", metavar="LOCALPORT",
                         default=5683, type=int,
                         help="Port of the local node")
     parser.add_argument("--timeout", dest="timeout", metavar="TIMEOUT",
-                        default=10, type=int,
+                        default=120, type=int,
                         help="Timeout in seconds")
 
     args = parser.parse_args()
+
+    if (not args.remote_addr) == (not args.local_addr):
+        print("Exactly one of --local and --remote must be specified")
+        parser.print_help()
+        sys.exit()
 
     public = (args.pub_addr, args.pub_port)
     print("Public is set to [%s]:%d" % public)
