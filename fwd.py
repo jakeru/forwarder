@@ -3,118 +3,87 @@
 # 2017-01-10 14:21 (Jabbe): created
 # 2017-01-10 21:29 (Jabbe): a somewhat more flexible version
 # 2017-01-20 16:46 (Jabbe): handle in and outgoing traffic
+# 2017-01-24 14:29 (Jabbe): new approach with tuntap devices
 
 import argparse
 import sys
 import socket
 import select
 import time
+import tuntap
+import os
 
-bufSize = 1800
+BufSize = 2048
 
-class Session:
-    def __init__(self, sock, local, remote):
-        self.sock = sock
-        self.local = local
-        self.remote = remote
-        self.lastUsed = time.time()
-    def __repr__(self):
-        return "local [%s]:%d remote [%s]:%d" % (self.local[0], self.local[0],
-                                                 self.remote[0], s.remote[0])
+def handle_incoming(data, tun):
+    print("Writing %d B to tun device" % (len(data)))
+    os.write(tun, data)
 
-def forward(data, source, sockOut, dest, str):
-    print("%s: Got %d B from [%s]:%d" % (str, len(data), source[0], source[1]))
-    if dest is None:
-        print("%s: No remote/local: Dropping %d B" % (str, len(data)))
-    sent = sockOut.sendto(data, dest)
-    if sent == len(data):
-        print("%s: Forwarded %d B to [%s]:%d" % (str, len(data), dest[0], dest[1]))
-    else:
-        print("Failed to send %d B to [%s]:%d, sendto returned: %d" %
-              (len(data), dest[0], dest[1], sent))
+def handle_outgoing(data, addr, sock):
+    if addr[0] is None:
+        print("Dropped %d B, remote is not set" % (len(data)))
+        return
+    print("Sending %d B to remote: [%s]:%d" % (len(data), addr[0], addr[1]))
+    sock.sendto(data, addr)
 
-def remove_old_sessions(sessions, timeout):
-    valid = []
-    for s in sessions:
-        if time.time() >= s.lastUsed + timeout:
-            print("Timing out session %s" % str(s))
-            continue
-        valid.append(s)
-    return valid
+def listen(local, defaultRemote, tun, timeout):
+    print("Binding local socket to [%s]:%d" % local)
+    sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+    sock.bind(local)
 
-def find_session(local, remote, sessions):
-    for s in sessions:
-        if s.local == local and s.remote == remote:
-            return s
-    return None
-
-def handle_incoming(data, addr, sessions):
-    # TODO
-    pass
-
-def handle_outgoing_def(data, addr, defaultRemote, sockPublic):
-    forward(data, addr, sockPublic, defaultRemote, 'Default out')
-
-def handle_outgoing(data, addr, session, sockPublic):
-    s = find_session(addr, defaultRemote)
-    if not s:
-        s = Session(sockInternal, addr, defaultRemote)
-        sessions.append(s)
-    s.lastUsed = time.time()
-    pass
-
-def listen(public, internal, defaultRemote, defaultLocal, timeout):
-    sessions = []
-    defaultSession = None
-
-    sockPublic = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-    sockInternal = None
-
-    print("Binding sockPublic to [%s]:%d" % public)
-    sockPublic.bind(public)
-
-    if defaultRemote[0]:
-        print("Binding sockInternal to [%s]:%d" % internal)
-        sockInternal = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-        sockInternal.bind(internal)
+    remote = defaultRemote
+    lastRx = None
 
     while True:
-        sessions = remove_old_sessions(sessions)
-        rlistIn = [sockPublic]
-        if sockInternal:
-            rListIn.append(sockInternal)
-        rlist = select.select(rlistIn, [], [], timeout)[0]
+        rlistIn = [sock, tun]
+        rlist = select.select(rlistIn, [], [], 5)[0]
+        if sock in rlist:
+            data, addr = sock.recvfrom(BufSize)
+            lastRx = time.time()
+            print("Received %d B from [%s]:%d" % (len(data), addr[0], addr[1]))
+            if remote is None or remote[0] != addr[0] or remote[1] != addr[1]:
+                remote = addr[:2]
+                print("Remote changed: [%s]:%d" % (remote[0], remote[1]))
+            handle_incoming(data, tun)
+        elif tun in rlist:
+            data = os.read(tun, BufSize)
+            print("Received %d B from tun device" % (len(data)))
+            handle_outgoing(data, remote, sock)
+        elif lastRx is not None and time.time() >= lastRx + timeout:
+            if remote != defaultRemote:
+                remote = defaultRemote
+                print("Timeout, remote set to: [%s]:%d" % (remote[0], remote[1]))
 
-        if sockPublic in rlist:
-            data, addr = sockPublic.recvfrom(bufSize)
-            handle_incoming(data, addr[:2], sessions)
+class MyParser(argparse.ArgumentParser):
+    def __init__(self, description, extra_help):
+        super(MyParser, self).__init__(description=description,
+                                       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        self.extra_help = extra_help
 
-        if sockInternal and sockInternal in rlist:
-            data, addr = sockInternal.recvfrom(bufSize)
-            handle_outgoing_def(data, addr[:2], defaultRemote, sockPublic)
-
-        for s in sessions:
-            if s.sock in rlist:
-                handle_outgoing(data, addr[:2], s)
+    def print_help(self):
+        super(MyParser, self).print_help()
+        sys.stderr.write(self.extra_help)
 
 if __name__ == "__main__":
-    description = "Forward UDPv6 packets from one address to another."
+    description = """Forward traffic arrived at a tun device to a remote host
+using UDPv6."""
 
-    parser = argparse.ArgumentParser(description=description,
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    extra_help = """
+# Create a tun device named tun1:
+sudo ip tuntap add dev tun1 mode tun
 
-    parser.add_argument("--public", dest="pub_addr", metavar="PUBADDR",
-                        default="::",
-                        help="Public address")
-    parser.add_argument("--publicport", dest="pub_port", metavar="PUBPORT",
-                        default=56830, type=int,
-                        help="Public port")
-    parser.add_argument("--internal", dest="int_addr", metavar="INTADDR",
-                        default="fc00:1::1",
-                        help="Internal address",)
-    parser.add_argument("--internalport", dest="int_port", metavar="INTPORT",
-                        default=5683, type=int,
-                        help="Internal port")
+# Bring it up:
+sudo ip link set tun1 up
+
+# Route traffic destined to fc02::/64 to it:
+sudo sudo ip route add fc02::/64 dev tun1
+"""
+
+    parser = MyParser(description, extra_help)
+
+    parser.add_argument("--tun", dest="tun", metavar="TUNDEV",
+                        default="tun0",
+                        help="Tun device")
     parser.add_argument("--remote", dest="remote_addr", metavar="REMOTE",
                         default=None,
                         help="Address of the remote node")
@@ -122,27 +91,19 @@ if __name__ == "__main__":
                         default=56830, type=int,
                         help="Port of the remote node")
     parser.add_argument("--local", dest="local_addr", metavar="LOCAL",
-                        default=None,
+                        default="::",
                         help="Address of the local node")
     parser.add_argument("--localport", dest="local_port", metavar="LOCALPORT",
-                        default=5683, type=int,
+                        default=56830, type=int,
                         help="Port of the local node")
     parser.add_argument("--timeout", dest="timeout", metavar="TIMEOUT",
-                        default=120, type=int,
+                        default=100, type=int,
                         help="Timeout in seconds")
 
     args = parser.parse_args()
 
-    if (not args.remote_addr) == (not args.local_addr):
-        print("Exactly one of --local and --remote must be specified")
-        parser.print_help()
-        sys.exit()
-
-    public = (args.pub_addr, args.pub_port)
-    print("Public is set to [%s]:%d" % public)
-
-    internal = (args.int_addr, args.int_port)
-    print("Internal is set to [%s]:%d" % internal)
+    print("Tun device: %s" % args.tun)
+    tun = tuntap.tun_open(args.tun)
 
     remote = (args.remote_addr, args.remote_port)
     print("Remote is set to [%s]:%d" % remote)
@@ -150,4 +111,6 @@ if __name__ == "__main__":
     local = (args.local_addr, args.local_port)
     print("Local is set to [%s]:%d" % local)
 
-    listen(public, internal, remote, local, args.timeout)
+    print("Timeout is set to %d s" % args.timeout)
+
+    listen(local, remote, tun, args.timeout)
