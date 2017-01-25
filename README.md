@@ -28,7 +28,7 @@ sudo ip link set tun0 up
 sudo ip route add fc00::/48 dev tun0
 
 # Start the tool and make it listen on port 56830:
-./fwd.py --localport 56830 
+./fwd.py --localport 56830
 ```
 
 ## Setup a client

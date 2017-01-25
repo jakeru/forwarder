@@ -24,13 +24,13 @@ class Remote:
     def __str__(self):
         fmt = "remote [%s]:%d, last rx: %d s ago"
         return fmt % (self.address[0], self.address[1], int(time.time() - self.lastRx))
-    
+
 class Route:
     def __init__(self, prefix, prefixLength, remote):
         self.prefix = prefix
         self.prefixLength = prefixLength
         self.remote = remote
-    def __str__(self):    
+    def __str__(self):
         fmt = "route %s through %s"
         return fmt % (ip.ipv6_prefix_to_str(self.prefix, self.prefixLength), str(self.remote))
 
@@ -68,7 +68,7 @@ def update_routes(routes, remotes):
 def handle_incoming(data, addr, routes, remotes, tun):
     try:
         remote = find_remote(remotes, addr)
-        if remote is None:                
+        if remote is None:
             remote = Remote(addr)
             remotes.append(remote)
             print("  Got packet from new remote: %s" % (str(remote)))
@@ -115,14 +115,14 @@ def listen(local, default, tun, timeout):
 
     while True:
         remotes = timeout_remotes(remotes, timeout)
-        routes = update_routes(routes, remotes) 
-        
+        routes = update_routes(routes, remotes)
+
         rlistIn = [sock, tun]
         rlist = select.select(rlistIn, [], [], 5)[0]
         if sock in rlist:
             data, addr = sock.recvfrom(BufSize)
             addr = addr[:2]
-            print("Received %d B from [%s]:%d" % (len(data), addr[0], addr[1]))            
+            print("Received %d B from [%s]:%d" % (len(data), addr[0], addr[1]))
             handle_incoming(data, addr, routes, remotes, tun)
         elif tun in rlist:
             data = os.read(tun, BufSize)

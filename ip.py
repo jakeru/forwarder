@@ -10,10 +10,10 @@ class IPv6Packet:
         self.source = source
         self.destination = destination
         self.payload = payload
-        
+
     def __str__(self):
         fmt = "nextHeader: %d, hopLimit: %d, source: %s, dest: %s, payloadLength: %d"
-        return fmt % (self.nextHeader, self.hopLimit, ipv6_to_str(self.source), 
+        return fmt % (self.nextHeader, self.hopLimit, ipv6_to_str(self.source),
                       ipv6_to_str(self.destination), len(self.payload))
 
 def ipv6_decode(data):
@@ -34,7 +34,7 @@ def ipv6_prefix_eq(p1, p2, prefixLength):
     bits = prefixLength % 8
     mask = 0xff << (8-bits)
     return ord(p1[prefixLength/8]) & mask == ord(p2[prefixLength/8]) & mask
- 
+
 def ipv6_prefix(addr, prefixLength):
     prefix = bytearray(16)
     for i in range(0, prefixLength / 8):
@@ -52,7 +52,7 @@ def ipv6_to_str(addr):
         # Lets hope it is an address followed by a port.
         return "[%s]:%d" % (inet_ntop(AF_INET6, addr[0], addr[1]))
     # Address only.
-    return inet_ntop(AF_INET6, addr) 
+    return inet_ntop(AF_INET6, addr)
 
 def ipv6_from_str(str):
     return inet_pton(AF_INET6, str)
@@ -63,7 +63,7 @@ if __name__ == "__main__":
     print("ipv6_prefix(%s, 4): %s" % (ipv6_to_str(addr), ipv6_to_str(ipv6_prefix(addr, 4))))
     print("ipv6_prefix(%s, 8): %s" % (ipv6_to_str(addr), ipv6_to_str(ipv6_prefix(addr, 8))))
     print("ipv6_prefix(%s, 64): %s" % (ipv6_to_str(addr), ipv6_to_str(ipv6_prefix(addr, 64))))
-    
+
     p1 = ipv6_from_str("2001:1234::")
     p2 = ipv6_from_str("2001:1270::")
     print("ipv6_prefix_eq(%s, %s, 0): %d" % (ipv6_to_str(p1), ipv6_to_str(p2), ipv6_prefix_eq(p1, p2, 0)))
