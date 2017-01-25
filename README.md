@@ -9,7 +9,6 @@ port and the receiver port.
 
 Known limitations:
 
-- Only one client is supported at the time on the server.
 - IPv6 is required. It is quite strait forward to improve the tool to
   support other type of links, UDPv4, TCP or whatever.
 
@@ -50,7 +49,7 @@ sudo ip link set tun0 up
 sudo ip route add 2001::1 dev tun0
 
 # Start the tool and give the address of the server to it:
-./fwd.py --remote 2001::1 --remoteport 56830
+./fwd.py --default 2001::1 --defaultport 56830
 ```
 
 On the client it should now be possible to ping the server if the
